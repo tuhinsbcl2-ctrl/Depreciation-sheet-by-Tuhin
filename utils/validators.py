@@ -9,9 +9,9 @@ from datetime import date
 from typing import Tuple
 
 
-def validate_positive_number(value: str, field_name: str = "Value") -> Tuple[bool, str]:
+def validate_non_negative_number(value: str, field_name: str = "Value") -> Tuple[bool, str]:
     """
-    Validate that *value* can be parsed as a non-negative float.
+    Validate that *value* can be parsed as a non-negative float (>= 0).
 
     Parameters
     ----------
@@ -32,6 +32,10 @@ def validate_positive_number(value: str, field_name: str = "Value") -> Tuple[boo
     if num < 0:
         return False, f"{field_name} must be zero or a positive number."
     return True, ""
+
+
+# Backward-compatible alias — callers expecting the old name continue to work.
+validate_positive_number = validate_non_negative_number
 
 
 def validate_positive_integer(value: str, field_name: str = "Value") -> Tuple[bool, str]:
@@ -95,4 +99,4 @@ def validate_non_negative(value: str, field_name: str = "Value") -> Tuple[bool, 
     -------
     (True, '')  or  (False, error_message)
     """
-    return validate_positive_number(value, field_name)
+    return validate_non_negative_number(value, field_name)

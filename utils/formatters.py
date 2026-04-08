@@ -44,7 +44,8 @@ def format_currency(value: float, decimals: int = 2) -> str:
         # else s stays as-is
 
         if decimals > 0:
-            dec_str = f"{dec_part:.{decimals}f}"[1:]  # e.g. ".89"
+            # f"{dec_part:.Xf}" produces e.g. "0.89"; strip the leading "0" to get ".89"
+            dec_str = f"{dec_part:.{decimals}f}"[1:]
             result = s + dec_str
         else:
             result = s
