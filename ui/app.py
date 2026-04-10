@@ -110,6 +110,11 @@ class DepreciationApp:
         dta_tab = DtaTab(notebook)
         notebook.add(dta_tab, text="  DTA / DTL Calculator  ")
 
+        # Wire cross-tab auto-fill:  CA → IT and DTA;  IT → DTA
+        ca_tab.set_tax_tab(it_tab)
+        ca_tab.set_dta_tab(dta_tab)
+        it_tab.set_dta_tab(dta_tab)
+
     def run(self):
         """Start the tkinter event loop."""
         self.root.mainloop()
