@@ -7,6 +7,7 @@ Covers:
   * No difference (zero DTA and DTL)
   * Multiple assets — net position calculation
   * Net DTA vs Net DTL selection
+  * Opening balance and movement calculations
 """
 
 import unittest
@@ -27,6 +28,10 @@ class TestSingleAsset(unittest.TestCase):
         self.assertAlmostEqual(row.difference, 20000.0, places=2)
         self.assertAlmostEqual(row.dtl, 5000.0, places=2)   # 20000 * 25%
         self.assertAlmostEqual(row.dta, 0.0, places=2)
+        # Default opening balance = 0; closing = 0 - 5000 = -5000 (DTL)
+        self.assertAlmostEqual(row.opening_balance, 0.0, places=2)
+        self.assertAlmostEqual(row.closing_balance, -5000.0, places=2)
+        self.assertAlmostEqual(row.movement, -5000.0, places=2)
 
     def test_dta_when_tax_greater_than_book(self):
         """Tax value > Book value → DTA."""
@@ -108,6 +113,98 @@ class TestEdgeCases(unittest.TestCase):
         summary = compute_dta_dtl(assets)
         self.assertAlmostEqual(summary.rows[0].dtl, 0.0, places=2)
         self.assertAlmostEqual(summary.rows[0].dta, 0.0, places=2)
+
+
+class TestOpeningBalanceAndMovement(unittest.TestCase):
+    """Tests for opening balance, movement, and closing balance logic."""
+
+    def test_opening_balance_default_zero(self):
+        """Default opening_balance should be 0.0 and movement equals closing."""
+        assets = [DtaAssetInput("A", book_value=60000, tax_value=80000, tax_rate=25.0)]
+        summary = compute_dta_dtl(assets)
+        row = summary.rows[0]
+        # DTA = (80000 - 60000) * 25% = 5000; closing = +5000
+        self.assertAlmostEqual(row.opening_balance, 0.0, places=2)
+        self.assertAlmostEqual(row.closing_balance, 5000.0, places=2)
+        self.assertAlmostEqual(row.movement, 5000.0, places=2)
+
+    def test_opening_balance_dta_reduces_movement(self):
+        """When there is a prior DTA opening balance, movement is smaller."""
+        # Prior year DTA = 3000, current year DTA = 5000; movement = 2000
+        assets = [DtaAssetInput("A", book_value=60000, tax_value=80000,
+                                 tax_rate=25.0, opening_balance=3000.0)]
+        summary = compute_dta_dtl(assets)
+        row = summary.rows[0]
+        self.assertAlmostEqual(row.opening_balance, 3000.0, places=2)
+        self.assertAlmostEqual(row.closing_balance, 5000.0, places=2)
+        self.assertAlmostEqual(row.movement, 2000.0, places=2)
+
+    def test_opening_dtl_balance_reversal(self):
+        """Prior DTL opening balance (negative) reverses when current year is DTA."""
+        # Prior year DTL = 2000 → opening = -2000; current DTA = 5000
+        # movement = 5000 - (-2000) = 7000
+        assets = [DtaAssetInput("A", book_value=60000, tax_value=80000,
+                                 tax_rate=25.0, opening_balance=-2000.0)]
+        summary = compute_dta_dtl(assets)
+        row = summary.rows[0]
+        self.assertAlmostEqual(row.opening_balance, -2000.0, places=2)
+        self.assertAlmostEqual(row.closing_balance, 5000.0, places=2)
+        self.assertAlmostEqual(row.movement, 7000.0, places=2)
+
+    def test_summary_total_opening_balance(self):
+        """total_opening_balance should be the signed sum across all assets."""
+        assets = [
+            DtaAssetInput("A", book_value=40000, tax_value=60000,
+                           tax_rate=25.0, opening_balance=2000.0),   # DTA opening
+            DtaAssetInput("B", book_value=80000, tax_value=60000,
+                           tax_rate=25.0, opening_balance=-1000.0),  # DTL opening
+        ]
+        summary = compute_dta_dtl(assets)
+        # total_opening = 2000 + (-1000) = 1000
+        self.assertAlmostEqual(summary.total_opening_balance, 1000.0, places=2)
+
+    def test_summary_net_closing_balance(self):
+        """net_closing_balance = net DTA − net DTL (signed)."""
+        assets = [DtaAssetInput("A", book_value=40000, tax_value=60000, tax_rate=25.0)]
+        summary = compute_dta_dtl(assets)
+        # DTA = 20000 * 25% = 5000 → net_closing = +5000
+        self.assertAlmostEqual(summary.net_closing_balance, 5000.0, places=2)
+
+    def test_summary_net_movement(self):
+        """net_movement = net_closing_balance − total_opening_balance."""
+        assets = [DtaAssetInput("A", book_value=40000, tax_value=60000,
+                                 tax_rate=25.0, opening_balance=3000.0)]
+        summary = compute_dta_dtl(assets)
+        # closing = 5000, opening = 3000; movement = 2000
+        self.assertAlmostEqual(summary.net_movement, 2000.0, places=2)
+
+
+class TestGenerateFYOptions(unittest.TestCase):
+    """Tests for the FY option generator in config."""
+
+    def test_current_fy_in_options(self):
+        """The default FY should be present in the options list."""
+        from config import generate_fy_options
+        options, current_fy = generate_fy_options()
+        self.assertIn(current_fy, options)
+
+    def test_fy_format(self):
+        """Every FY string should match 'FY YYYY-YY' pattern."""
+        from config import generate_fy_options
+        import re
+        options, _ = generate_fy_options()
+        pattern = re.compile(r"^FY \d{4}-\d{2}$")
+        for fy in options:
+            self.assertRegex(fy, pattern)
+
+    def test_options_are_consecutive(self):
+        """Each FY should be exactly one year after the previous."""
+        from config import generate_fy_options
+        options, _ = generate_fy_options()
+        for i in range(1, len(options)):
+            prev_year = int(options[i - 1].split()[1].split("-")[0])
+            curr_year = int(options[i].split()[1].split("-")[0])
+            self.assertEqual(curr_year, prev_year + 1)
 
 
 if __name__ == "__main__":

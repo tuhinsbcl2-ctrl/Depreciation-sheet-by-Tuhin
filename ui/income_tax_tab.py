@@ -11,7 +11,7 @@ Bottom buttons : Calculate, Clear, Import, Export
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-from config import INCOME_TAX_BLOCKS
+from config import INCOME_TAX_BLOCKS, CA_TO_IT_BLOCK_MAP, generate_fy_options
 from models.income_tax import TaxBlockInput, compute_tax_depreciation
 from utils.validators import validate_positive_number, validate_percentage
 from utils.formatters import format_currency, format_percentage
@@ -31,7 +31,44 @@ class IncomeTaxTab(ttk.Frame):
     def __init__(self, parent, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self._results = []     # list of TaxDepreciationResult
+        self._dta_tab = None   # reference to DtaTab (wired by app.py)
         self._build_ui()
+
+    # ------------------------------------------------------------------
+    # Cross-tab wiring
+    # ------------------------------------------------------------------
+
+    def set_dta_tab(self, tab):
+        """Register the DtaTab so we can auto-fill it after Calculate."""
+        self._dta_tab = tab
+
+    def auto_fill_from_ca(self, asset, schedule, fy_label: str):
+        """
+        Auto-fill this tab from a Companies Act calculation result.
+
+        Parameters
+        ----------
+        asset    : AssetInput — the CA asset whose schedule was computed
+        schedule : list of DepreciationRow — the full CA depreciation schedule
+        fy_label : str — e.g. "FY 2024-25"
+        """
+        # Sync FY selector
+        if fy_label in self._fy_options:
+            self._fy_var.set(fy_label)
+
+        # Map CA category to the nearest IT block
+        it_block = CA_TO_IT_BLOCK_MAP.get(asset.category, list(INCOME_TAX_BLOCKS.keys())[0])
+        self._vars["block_name"].set(it_block)
+
+        # Find the CA row for the selected FY and use its opening WDV
+        ca_row = next((r for r in schedule if r.year_label == fy_label), None)
+        if ca_row is not None:
+            self._vars["opening_wdv"].set(str(round(ca_row.opening_wdv, 2)))
+        else:
+            self._vars["opening_wdv"].set("0")
+
+        # Sync the IT rate to the mapped block
+        self._on_block_change()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -63,6 +100,19 @@ class IncomeTaxTab(ttk.Frame):
     def _build_form(self, parent):
         block_names = list(INCOME_TAX_BLOCKS.keys())
 
+        # --- Financial Year selector ---
+        fy_options, current_fy = generate_fy_options()
+        self._fy_var = tk.StringVar(value=current_fy)
+        self._fy_options = fy_options
+        ttk.Label(parent, text="Financial Year (FY):", font=FONT_LABEL).grid(
+            row=0, column=0, sticky="e", padx=(PAD_INNER, 2), pady=2,
+        )
+        ttk.Combobox(
+            parent, textvariable=self._fy_var, values=fy_options,
+            width=ENTRY_WIDTH - 2, state="readonly", font=FONT_INPUT,
+        ).grid(row=0, column=1, sticky="w", padx=(2, PAD_INNER), pady=2)
+
+        # --- Block detail fields ---
         fields = [
             ("Block Name:",          "block_name",        "combo",    block_names),
             ("Opening WDV (₹):",     "opening_wdv",       "entry",    None),
@@ -76,6 +126,7 @@ class IncomeTaxTab(ttk.Frame):
 
         for i, (label, key, wtype, options) in enumerate(fields):
             row, col = divmod(i, 2)
+            row += 1          # offset below the FY row
             col_base = col * 4
             ttk.Label(parent, text=label, font=FONT_LABEL).grid(
                 row=row, column=col_base, sticky="e", padx=(PAD_INNER, 2), pady=2,
@@ -94,7 +145,7 @@ class IncomeTaxTab(ttk.Frame):
             widget.grid(row=row, column=col_base + 1, sticky="w", padx=(2, PAD_INNER), pady=2)
 
         # 180-day checkbox
-        cb_row = (len(fields) + 1) // 2 + 1
+        cb_row = (len(fields) + 1) // 2 + 2
         ttk.Checkbutton(
             parent,
             text="Asset used for less than 180 days (50% depreciation applies)",
@@ -184,6 +235,10 @@ class IncomeTaxTab(ttk.Frame):
                 f"Depreciation has been set to ₹0.",
             )
 
+        # Auto-fill DTA tab with the IT closing WDV
+        if self._dta_tab is not None:
+            self._dta_tab.auto_fill_from_it(result, self._fy_var.get())
+
     def _on_clear(self):
         blocks = list(INCOME_TAX_BLOCKS.keys())
         self._vars["block_name"].set(blocks[0] if blocks else "")
@@ -193,6 +248,8 @@ class IncomeTaxTab(ttk.Frame):
         self._on_block_change()
         self._clear_table()
         self._results = []
+        _, current_fy = generate_fy_options()
+        self._fy_var.set(current_fy)
 
     def _on_import(self):
         filepath = filedialog.askopenfilename(

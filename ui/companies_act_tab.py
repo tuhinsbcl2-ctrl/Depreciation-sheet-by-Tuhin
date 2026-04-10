@@ -17,6 +17,7 @@ from config import (
     COMPANIES_ACT_USEFUL_LIVES,
     DEPRECIATION_METHODS,
     DEFAULT_RESIDUAL_VALUE_PCT,
+    generate_fy_options,
 )
 from models.companies_act import AssetInput, compute_depreciation_schedule
 from utils.validators import (
@@ -49,7 +50,21 @@ class CompaniesActTab(ttk.Frame):
         super().__init__(parent, *args, **kwargs)
         self.configure(style="TFrame")
         self._schedule_rows = []   # last computed schedule
+        self._tax_tab = None       # reference to IncomeTaxTab (wired by app.py)
+        self._dta_tab = None       # reference to DtaTab (wired by app.py)
         self._build_ui()
+
+    # ------------------------------------------------------------------
+    # Cross-tab wiring
+    # ------------------------------------------------------------------
+
+    def set_tax_tab(self, tab):
+        """Register the IncomeTaxTab so we can auto-fill it after Calculate."""
+        self._tax_tab = tab
+
+    def set_dta_tab(self, tab):
+        """Register the DtaTab so we can auto-fill it after Calculate."""
+        self._dta_tab = tab
 
     # ------------------------------------------------------------------
     # UI construction
@@ -85,6 +100,19 @@ class CompaniesActTab(ttk.Frame):
 
     def _build_form(self, parent):
         """Create labeled input fields."""
+        # --- Financial Year selector (full-width row at the top) ---
+        fy_options, current_fy = generate_fy_options()
+        ttk.Label(parent, text="Financial Year (FY):", font=FONT_LABEL).grid(
+            row=0, column=0, sticky="e", padx=(PAD_INNER, 2), pady=2,
+        )
+        self._fy_var = tk.StringVar(value=current_fy)
+        self._fy_options = fy_options
+        ttk.Combobox(
+            parent, textvariable=self._fy_var, values=fy_options,
+            width=ENTRY_WIDTH - 2, state="readonly", font=FONT_INPUT,
+        ).grid(row=0, column=1, sticky="w", padx=(2, PAD_INNER), pady=2)
+
+        # --- Asset detail fields ---
         labels_entries = [
             ("Asset Name:",       "asset_name",        "entry",    None),
             ("Category:",         "category",          "combo",    ASSET_CATEGORIES),
@@ -97,6 +125,7 @@ class CompaniesActTab(ttk.Frame):
         self._vars = {}
         for i, (label, key, wtype, options) in enumerate(labels_entries):
             row, col = divmod(i, 2)
+            row += 1          # offset below the FY row
             col_base = col * 4  # 4 columns per pair: label + entry + (gap)
             ttk.Label(parent, text=label, font=FONT_LABEL).grid(
                 row=row, column=col_base, sticky="e", padx=(PAD_INNER, 2), pady=2
@@ -185,8 +214,17 @@ class CompaniesActTab(ttk.Frame):
         self._schedule_rows = compute_depreciation_schedule(asset)
         self._populate_table(self._schedule_rows)
 
+        # Auto-fill sister tabs with the results for the selected FY
+        fy_label = self._fy_var.get()
+        if self._tax_tab is not None:
+            self._tax_tab.auto_fill_from_ca(asset, self._schedule_rows, fy_label)
+        if self._dta_tab is not None:
+            self._dta_tab.auto_fill_from_ca(asset, self._schedule_rows, fy_label)
+
     def _on_clear(self):
         """Reset all inputs and clear the table."""
+        _, current_fy = generate_fy_options()
+        self._fy_var.set(current_fy)
         for key, var in self._vars.items():
             if key == "category":
                 var.set(ASSET_CATEGORIES[0])

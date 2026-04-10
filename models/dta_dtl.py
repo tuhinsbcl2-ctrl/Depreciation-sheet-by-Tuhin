@@ -11,7 +11,7 @@ asset or liability differs from its tax base (value for Income Tax purposes).
 * Book Value < Tax Value  →  future deductible amount (DTA)
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 
 
@@ -26,6 +26,7 @@ class DtaAssetInput:
     book_value: float   # WDV per Companies Act
     tax_value: float    # WDV per Income Tax
     tax_rate: float     # Effective tax rate as a percentage (e.g. 25.168)
+    opening_balance: float = 0.0  # Signed: + = opening DTA, − = opening DTL
 
 
 @dataclass
@@ -38,6 +39,9 @@ class DtaAssetResult:
     tax_rate: float
     dta: float                 # Deferred Tax Asset  (if difference < 0)
     dtl: float                 # Deferred Tax Liability (if difference > 0)
+    opening_balance: float     # Signed prior-year balance (+ = DTA, − = DTL)
+    closing_balance: float     # Required closing balance (+ = DTA, − = DTL)
+    movement: float            # P&L charge for the year (closing − opening)
 
 
 @dataclass
@@ -46,6 +50,9 @@ class DtaSummary:
     rows: List[DtaAssetResult]
     net_dta: float             # Positive → net asset position
     net_dtl: float             # Positive → net liability position
+    total_opening_balance: float  # Sum of signed opening balances
+    net_closing_balance: float    # Net closing position (+ = DTA, − = DTL)
+    net_movement: float           # Total P&L movement for the year
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +67,9 @@ def compute_dta_dtl(assets: List[DtaAssetInput]) -> DtaSummary:
         difference = book_value − tax_value
         if difference > 0  →  DTL = difference × (tax_rate / 100)
         if difference < 0  →  DTA = |difference| × (tax_rate / 100)
+
+    Closing balance (signed): + = DTA, − = DTL
+    Movement (P&L charge)    = closing_balance − opening_balance
 
     The summary contains the net position:
         net_dta = sum(DTA) − sum(DTL)   [positive means net asset]
@@ -76,6 +86,7 @@ def compute_dta_dtl(assets: List[DtaAssetInput]) -> DtaSummary:
     rows: List[DtaAssetResult] = []
     total_dta = 0.0
     total_dtl = 0.0
+    total_opening = 0.0
 
     for asset in assets:
         diff = asset.book_value - asset.tax_value
@@ -96,6 +107,12 @@ def compute_dta_dtl(assets: List[DtaAssetInput]) -> DtaSummary:
         total_dta += dta
         total_dtl += dtl
 
+        # Closing balance: positive = DTA, negative = DTL
+        closing_balance = dta - dtl
+        opening_balance = asset.opening_balance
+        movement = closing_balance - opening_balance
+        total_opening += opening_balance
+
         rows.append(DtaAssetResult(
             asset_name=asset.asset_name,
             book_value=round(asset.book_value, 2),
@@ -104,9 +121,21 @@ def compute_dta_dtl(assets: List[DtaAssetInput]) -> DtaSummary:
             tax_rate=round(asset.tax_rate, 3),
             dta=round(dta, 2),
             dtl=round(dtl, 2),
+            opening_balance=round(opening_balance, 2),
+            closing_balance=round(closing_balance, 2),
+            movement=round(movement, 2),
         ))
 
     net_dta = round(max(total_dta - total_dtl, 0.0), 2)
     net_dtl = round(max(total_dtl - total_dta, 0.0), 2)
+    net_closing = round(total_dta - total_dtl, 2)
+    net_movement = round(net_closing - total_opening, 2)
 
-    return DtaSummary(rows=rows, net_dta=net_dta, net_dtl=net_dtl)
+    return DtaSummary(
+        rows=rows,
+        net_dta=net_dta,
+        net_dtl=net_dtl,
+        total_opening_balance=round(total_opening, 2),
+        net_closing_balance=round(net_closing, 2),
+        net_movement=round(net_movement, 2),
+    )

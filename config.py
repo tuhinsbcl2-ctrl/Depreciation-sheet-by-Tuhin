@@ -5,6 +5,8 @@ All business-rule constants (useful lives, depreciation rates, tax rates, etc.)
 are centralised here so that no magic numbers appear elsewhere in the codebase.
 """
 
+from datetime import date
+
 # ---------------------------------------------------------------------------
 # Companies Act — Schedule II default useful lives (in years)
 # Source: Companies Act 2013, Schedule II
@@ -66,3 +68,40 @@ DAYS_IN_YEAR = 365
 APP_TITLE = "Depreciation & DTA Calculator — Indian Companies Act & IT Act"
 MIN_WINDOW_WIDTH = 1000
 MIN_WINDOW_HEIGHT = 700
+
+
+# ---------------------------------------------------------------------------
+# Financial Year helpers
+# ---------------------------------------------------------------------------
+
+def generate_fy_options(years_back: int = 10, years_forward: int = 3):
+    """
+    Return (options_list, default_fy) where *options_list* is a list of FY
+    strings like ``"FY 2024-25"`` spanning *years_back* years before and
+    *years_forward* years after the current FY.
+
+    The current FY is determined by today's date (April 1 – March 31).
+    """
+    today = date.today()
+    # FY starts in April; if month >= 4 we are in the FY that started this year.
+    current_fy_start = today.year if today.month >= 4 else today.year - 1
+
+    options = [
+        f"FY {y}-{str(y + 1)[-2:]}"
+        for y in range(current_fy_start - years_back, current_fy_start + years_forward + 1)
+    ]
+    current_fy = f"FY {current_fy_start}-{str(current_fy_start + 1)[-2:]}"
+    return options, current_fy
+
+
+# ---------------------------------------------------------------------------
+# Mapping from Companies Act categories to Income Tax blocks
+# ---------------------------------------------------------------------------
+CA_TO_IT_BLOCK_MAP = {
+    "Building": "Building (Non-residential/Factory)",
+    "Plant & Machinery": "Plant & Machinery (General)",
+    "Furniture & Fittings": "Furniture & Fittings",
+    "Vehicles": "Plant & Machinery (General)",
+    "Computer & IT Equipment": "Plant & Machinery (Special)",
+    "Intangible Assets": "Intangible Assets",
+}
