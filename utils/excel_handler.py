@@ -1,5 +1,5 @@
 """
-utils/excel_handler.py — Excel import/export using openpyxl.
+utils/excel_handler.py — Excel import/export using openpyxl (+ pandas for FAR).
 
 Import
 ------
@@ -8,7 +8,10 @@ Import
 * Income Tax sheet: columns Block Name, Opening WDV, Additions, Deletions, Rate
 * FAR sheet: Fixed Asset Register with Asset ID, Asset Name, Asset Type,
   Purchase Date, Put to Use Date, Cost, Opening WDV, Additions, Deletions,
-  Sale Date, Dep Rate (%), Days Used, Depreciation Method, and more.
+  Sale Date, Dep Rate (%), Days Used, Depreciation Method, Opening DTA,
+  Opening DTL, and more.  When pandas is installed it is used as the primary
+  import engine for FAR files, providing robust data-type handling and a
+  per-row validation pass that produces an actionable Error Report.
 
 Export
 ------
@@ -17,6 +20,7 @@ Export
 """
 
 import csv
+import logging
 from datetime import date
 from typing import List, Optional, Tuple
 
@@ -27,6 +31,14 @@ try:
     OPENPYXL_AVAILABLE = True
 except ImportError:
     OPENPYXL_AVAILABLE = False
+
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +353,9 @@ _FAR_HEADER_MAP = [
     ("closing wdv",             "closing_wdv"),
     ("profit",                  "profit_loss"),
     ("loss on sale",            "profit_loss"),
+    # Opening DTA / DTL balances (new columns for carry-forward)
+    ("opening dta",             "opening_dta"),
+    ("opening dtl",             "opening_dtl"),
 ]
 
 
@@ -382,16 +397,20 @@ def import_far_data(filepath: str) -> Tuple[List[dict], List[str]]:
     """
     Read a Fixed Asset Register (FAR) from *filepath*.
 
-    Supports both ``.xlsx`` / ``.xls`` (via openpyxl) and ``.csv`` files.
+    Supports both ``.xlsx`` / ``.xls`` (via pandas/openpyxl) and ``.csv`` files.
 
-    The function locates a sheet whose name contains "far", "fixed asset", or
-    "asset register" (case-insensitive), falling back to the first sheet.
+    When *pandas* is installed it is used as the primary import engine because
+    it handles mixed-type columns and date parsing more robustly.  A per-row
+    validation pass detects text in numeric fields, missing/invalid dates, and
+    other issues — invalid rows are skipped and reported in the returned
+    ``errors`` list so the user can fix their spreadsheet without crashing.
 
     Expected column headers (flexible matching, case-insensitive):
         Asset ID, Asset Name, Asset Type, Purchase Date, Put to Use Date,
         Cost, Opening WDV, Additions, Deletions / Sale Value, Sale Date,
-        Dep Rate (%), Days Used, Depreciation Method, Depreciation for FY,
-        Accumulated Depreciation, Closing WDV, Profit/Loss on Sale.
+        Dep Rate (%), Days Used, Depreciation Method, Opening DTA, Opening DTL,
+        Depreciation for FY, Accumulated Depreciation, Closing WDV,
+        Profit/Loss on Sale.
 
     Returns
     -------
@@ -400,13 +419,132 @@ def import_far_data(filepath: str) -> Tuple[List[dict], List[str]]:
         errors — list of human-readable error / warning strings
     """
     lower = filepath.lower()
+    if PANDAS_AVAILABLE:
+        return _import_far_pandas(filepath)
     if lower.endswith(".csv"):
         return _import_far_csv(filepath)
     return _import_far_excel(filepath)
 
 
+# ---------------------------------------------------------------------------
+# Numeric / date field names used for validation
+# ---------------------------------------------------------------------------
+_NUMERIC_FIELDS = {
+    "cost", "opening_wdv", "additions", "deletions",
+    "dep_rate", "days_used", "dep_for_fy", "accum_dep", "closing_wdv",
+    "profit_loss", "opening_dta", "opening_dtl",
+}
+_DATE_FIELDS = {"purchase_date", "put_to_use_date", "sale_date"}
+
+
+def _validate_far_entry(entry: dict, row_num: int, raw_row=None, col_map: dict = None) -> List[str]:
+    """
+    Validate a single FAR entry dict.  Returns a list of human-readable issue
+    strings (empty list = row is valid).
+
+    When *raw_row* and *col_map* are provided, numeric-field validation is
+    performed against the original (pre-conversion) string values so that
+    ``"BAD_VALUE"`` in a Cost column is correctly flagged.
+
+    Checks performed
+    ----------------
+    * ``asset_name`` is non-empty.
+    * All numeric fields contain valid numbers (not arbitrary text).
+    * Date fields, if present, are parseable.
+    """
+    from utils.formatters import parse_date  # avoid circular import at module level
+
+    issues: List[str] = []
+    asset = entry.get("asset_name") or f"(row {row_num})"
+
+    if not entry.get("asset_name"):
+        issues.append(f"Row {row_num}: missing Asset Name.")
+
+    for field in _NUMERIC_FIELDS:
+        # Use raw value if available; fall back to the (already-converted) entry value
+        if raw_row is not None and col_map is not None:
+            idx = col_map.get(field)
+            raw = raw_row[idx] if idx is not None and idx < len(raw_row) else None
+        else:
+            raw = entry.get(field)
+        if raw is None or raw == "":
+            continue
+        try:
+            float(raw)
+        except (TypeError, ValueError):
+            issues.append(
+                f"Row {row_num} [{asset}]: '{field}' has non-numeric value '{raw}'."
+            )
+
+    for field in _DATE_FIELDS:
+        raw = entry.get(field)
+        if not raw:
+            continue
+        try:
+            parse_date(str(raw))
+        except Exception:
+            issues.append(
+                f"Row {row_num} [{asset}]: '{field}' has invalid date '{raw}'. "
+                "Expected DD/MM/YYYY."
+            )
+
+    return issues
+
+
+def _import_far_pandas(filepath: str) -> Tuple[List[dict], List[str]]:
+    """Use pandas to read a FAR Excel or CSV file with row-level validation."""
+    errors: List[str] = []
+    rows: List[dict] = []
+
+    try:
+        lower = filepath.lower()
+        if lower.endswith(".csv"):
+            df = pd.read_csv(filepath, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+        else:
+            # Try to find the FAR sheet
+            xl = pd.ExcelFile(filepath)
+            sheet_name = xl.sheet_names[0]
+            for name in xl.sheet_names:
+                if any(k in name.lower() for k in ("far", "fixed asset", "asset register")):
+                    sheet_name = name
+                    break
+            df = xl.parse(sheet_name, dtype=str, keep_default_na=False)
+    except Exception as exc:
+        log.error("pandas FAR import failed: %s", exc)
+        return [], [f"Cannot open file: {exc}"]
+
+    if df.empty:
+        return [], ["File is empty or has no data rows."]
+
+    # Normalise headers
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    col_map = _map_far_columns(list(df.columns))
+
+    if "asset_name" not in col_map:
+        return [], ["File does not contain a recognisable 'Asset Name' column."]
+
+    for row_num, (_, pandas_row) in enumerate(df.iterrows(), start=2):
+        # Build a plain list so _extract_far_row can be reused
+        raw_row = list(pandas_row)
+        entry = _extract_far_row(raw_row, col_map)
+
+        # Per-row validation against original string values
+        row_issues = _validate_far_entry(entry, row_num, raw_row=raw_row, col_map=col_map)
+        if row_issues:
+            errors.extend(row_issues)
+            if not entry.get("asset_name"):
+                # Skip rows without an asset name entirely
+                log.warning("Skipping row %d: %s", row_num, "; ".join(row_issues))
+                continue
+
+        rows.append(entry)
+
+    log.info("pandas FAR import: %d valid rows, %d issues from %s", len(rows), len(errors), filepath)
+    return rows, errors
+
+
 def _import_far_excel(filepath: str) -> Tuple[List[dict], List[str]]:
-    """Internal: read FAR from an Excel file."""
+    """Internal: read FAR from an Excel file (openpyxl fallback)."""
     if not OPENPYXL_AVAILABLE:
         return [], ["openpyxl is not installed. Run: pip install openpyxl"]
 
@@ -506,6 +644,8 @@ def _extract_far_row(row, col_map: dict) -> dict:
         "accum_dep":      _to_float(_get("accum_dep")),
         "closing_wdv":    _to_float(_get("closing_wdv")),
         "profit_loss":    _to_float(_get("profit_loss")),
+        "opening_dta":    _to_float(_get("opening_dta")),
+        "opening_dtl":    _to_float(_get("opening_dtl")),
     }
 
 
@@ -522,7 +662,8 @@ def export_far_results(ws, far_rows: list):
         "Asset ID", "Asset Name", "Asset Type",
         "IT Opening WDV (₹)", "IT Dep (₹)", "IT Closing WDV (₹)",
         "CA Opening WDV (₹)", "CA Dep (₹)", "CA Closing WDV (₹)",
-        "Difference (₹)", "Tax Rate (%)", "DTA (₹)", "DTL (₹)",
+        "Difference (₹)", "Tax Rate (%)",
+        "Opening DTA (₹)", "Opening DTL (₹)", "Closing DTA (₹)", "Closing DTL (₹)",
     ]
     for col, h in enumerate(headers, start=1):
         ws.cell(row=1, column=col, value=h)
@@ -543,6 +684,8 @@ def export_far_results(ws, far_rows: list):
             r.get("ca_closing_wdv", 0.0),
             r.get("difference", 0.0),
             r.get("tax_rate", 0.0),
+            r.get("opening_dta", 0.0),
+            r.get("opening_dtl", 0.0),
             r.get("dta", 0.0),
             r.get("dtl", 0.0),
         ]

@@ -22,3 +22,8 @@ build/
 # Temporary files
 *.tmp
 *.bak
+
+# Runtime-generated files (created by the application)
+app.log
+settings.json
+far_history.db

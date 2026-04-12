@@ -1,10 +1,13 @@
 """
 ui/app.py — Main application window.
 
-Assembles the ttk.Notebook with three tabs:
+Assembles the ttk.Notebook with tabs:
   1. Companies Act Depreciation
   2. Income Tax Depreciation
   3. DTA / DTL Calculator
+  4. FAR Import & Bulk Calc
+  5. FAR History (SQLite)
+  6. Settings
 """
 
 import tkinter as tk
@@ -15,6 +18,8 @@ from ui.companies_act_tab import CompaniesActTab
 from ui.income_tax_tab import IncomeTaxTab
 from ui.dta_tab import DtaTab
 from ui.far_tab import FarImportTab
+from ui.history_tab import HistoryTab
+from ui.settings_tab import SettingsTab
 from ui.styles import (
     COLOR_BG, COLOR_PRIMARY,
     FONT_LABEL,
@@ -114,6 +119,15 @@ class DepreciationApp:
         # Tab 4 — FAR Import
         far_tab = FarImportTab(notebook)
         notebook.add(far_tab, text="  FAR Import & Bulk Calc  ")
+
+        # Tab 5 — FAR History
+        history_tab = HistoryTab(notebook)
+        history_tab.set_far_tab(far_tab)
+        notebook.add(history_tab, text="  FAR History  ")
+
+        # Tab 6 — Settings
+        settings_tab = SettingsTab(notebook)
+        notebook.add(settings_tab, text="  Settings  ")
 
         # Wire cross-tab auto-fill:  CA → IT and DTA;  IT → DTA
         ca_tab.set_tax_tab(it_tab)

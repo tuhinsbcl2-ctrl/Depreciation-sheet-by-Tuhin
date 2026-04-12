@@ -9,6 +9,8 @@ Workflow
 4.  Results are shown in the *Depreciation & DTA/DTL Results* table with
     columns for both Income Tax and Companies Act depreciation plus DTA/DTL.
 5.  Click **Export to Excel** to save the results.
+6.  Click **Save to History** to persist results in the local SQLite database.
+7.  Click **Error Report** (if import errors exist) to view the validation log.
 
 Calculation rules
 -----------------
@@ -17,7 +19,8 @@ Calculation rules
 * **Companies Act (CA)**: *Asset Type* is mapped to a Schedule II category to
   determine the useful life.  SLM or WDV is used per the *Dep Rate (%)* column.
   compute_depreciation_schedule() is used to extract the current-FY row.
-* **DTA / DTL**: Difference between CA Closing WDV and IT Closing WDV × tax rate.
+* **DTA / DTL**: Difference between CA Closing WDV and IT Closing WDV × tax rate,
+  adjusted by Opening DTA/DTL carried forward from the previous year.
 
 All pure calculation logic lives in utils/far_calculator.py so that it can
 be unit-tested without requiring a display.
@@ -30,11 +33,15 @@ from config import DTA_DTL_TAX_RATES, generate_fy_options
 from utils.formatters import format_currency, format_percentage
 from utils.excel_handler import import_far_data, export_all_to_excel
 from utils.far_calculator import calculate_asset
+from utils.logger import get_logger
+from utils.database import db
 from ui.styles import (
     COLOR_PRIMARY, COLOR_SUCCESS, COLOR_WARNING, COLOR_SECONDARY,
     FONT_HEADING, FONT_LABEL, FONT_INPUT, FONT_BUTTON, FONT_TITLE,
     PAD_OUTER, PAD_INNER, PAD_BUTTON, ENTRY_WIDTH,
 )
+
+log = get_logger(__name__)
 
 # ── Colour constants for result rows ──────────────────────────────────────────
 _DTA_COLOUR = "#D5F5E3"   # light green
@@ -57,6 +64,7 @@ class FarImportTab(ttk.Frame):
         self.configure(style="TFrame")
         self._far_rows: list = []       # imported raw FAR rows
         self._result_rows: list = []    # calculated result dicts
+        self._import_errors: list = []  # validation errors from last import
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -136,10 +144,12 @@ class FarImportTab(ttk.Frame):
 
     def _build_buttons(self, parent):
         buttons = [
-            ("Import FAR (Excel/CSV)", self._on_import,   "#555555"),
-            ("Calculate All",          self._on_calculate, COLOR_PRIMARY),
-            ("Clear",                  self._on_clear,     COLOR_WARNING),
-            ("Export to Excel",        self._on_export,    COLOR_SUCCESS),
+            ("Import FAR (Excel/CSV)", self._on_import,         "#555555"),
+            ("Calculate All",          self._on_calculate,       COLOR_PRIMARY),
+            ("Clear",                  self._on_clear,           COLOR_WARNING),
+            ("Export to Excel",        self._on_export,          COLOR_SUCCESS),
+            ("Save to History",        self._on_save_to_history, COLOR_SECONDARY),
+            ("Error Report",           self._on_error_report,    "#E67E22"),
         ]
         for i, (text, cmd, colour) in enumerate(buttons):
             tk.Button(
@@ -154,13 +164,15 @@ class FarImportTab(ttk.Frame):
             "asset_id", "asset_name", "asset_type",
             "purchase_date", "cost", "opening_wdv",
             "additions", "deletions", "dep_rate", "days_used", "method",
+            "opening_dta", "opening_dtl",
         )
         headings = (
             "Asset ID", "Asset Name", "Asset Type",
             "Purchase / Use Date", "Cost (₹)", "Opening WDV (₹)",
             "Additions (₹)", "Deletions (₹)", "Dep Rate (%)", "Days Used", "Method",
+            "Opening DTA (₹)", "Opening DTL (₹)",
         )
-        widths = (70, 150, 120, 110, 100, 110, 90, 90, 80, 70, 60)
+        widths = (70, 150, 120, 110, 100, 110, 90, 90, 80, 70, 60, 100, 100)
 
         self._assets_tree = ttk.Treeview(
             parent, columns=columns, show="headings", height=6,
@@ -187,15 +199,17 @@ class FarImportTab(ttk.Frame):
             "asset_name", "asset_type",
             "it_open", "it_dep", "it_close",
             "ca_open", "ca_dep", "ca_close",
-            "diff", "rate", "dta", "dtl",
+            "diff", "rate",
+            "open_dta", "open_dtl", "dta", "dtl",
         )
         headings = (
             "Asset Name", "Asset Type",
             "IT Opening WDV (₹)", "IT Dep (₹)", "IT Closing WDV (₹)",
             "CA Opening WDV (₹)", "CA Dep (₹)", "CA Closing WDV (₹)",
-            "Difference (₹)", "Rate %", "DTA (₹)", "DTL (₹)",
+            "Difference (₹)", "Rate %",
+            "Opening DTA (₹)", "Opening DTL (₹)", "Closing DTA (₹)", "Closing DTL (₹)",
         )
-        widths = (150, 120, 110, 100, 110, 110, 100, 110, 100, 70, 90, 90)
+        widths = (150, 120, 110, 100, 110, 110, 100, 110, 100, 70, 100, 100, 100, 100)
 
         self._results_tree = ttk.Treeview(
             parent, columns=columns, show="headings", height=8,
@@ -258,9 +272,18 @@ class FarImportTab(ttk.Frame):
         if not filepath:
             return
 
+        log.info("Importing FAR file: %s", filepath)
         rows, errors = import_far_data(filepath)
+        self._import_errors = errors
+
         if errors:
-            messagebox.showwarning("Import Warnings", "\n".join(errors[:20]))
+            log.warning("FAR import produced %d issue(s)", len(errors))
+            messagebox.showwarning(
+                "Import Warnings",
+                f"{len(errors)} issue(s) found during import.\n\n"
+                + "\n".join(errors[:10])
+                + ("\n…(see Error Report for full list)" if len(errors) > 10 else ""),
+            )
         if not rows:
             messagebox.showerror("Import Error", "No valid rows found in the file.")
             return
@@ -272,7 +295,9 @@ class FarImportTab(ttk.Frame):
         self._reset_summary()
         self._status_var.set(
             f"Imported {len(rows)} asset(s) from: {filepath}"
+            + (f"  |  {len(errors)} validation issue(s)" if errors else "")
         )
+        log.info("FAR import complete: %d rows, %d issues", len(rows), len(errors))
 
     def _on_calculate(self):
         if not self._far_rows:
@@ -281,6 +306,7 @@ class FarImportTab(ttk.Frame):
 
         fy_label = self._fy_var.get()
         tax_rate = DTA_DTL_TAX_RATES.get(self._tax_rate_var.get(), 25.168)
+        log.info("Calculating FAR for %s at %.3f%%", fy_label, tax_rate)
 
         results = []
         capital_gains = []
@@ -294,6 +320,7 @@ class FarImportTab(ttk.Frame):
                         f"₹{format_currency(result['it_capital_gain_amount'])}"
                     )
             except Exception as exc:
+                log.exception("Error processing asset '%s': %s", row.get("asset_name", "?"), exc)
                 messagebox.showwarning(
                     "Calculation Warning",
                     f"Error processing asset '{row.get('asset_name', '?')}': {exc}",
@@ -302,6 +329,7 @@ class FarImportTab(ttk.Frame):
         self._result_rows = results
         self._populate_results_table(results)
         self._update_summary(results)
+        log.info("Calculation complete: %d assets processed", len(results))
 
         if capital_gains:
             messagebox.showinfo(
@@ -314,6 +342,7 @@ class FarImportTab(ttk.Frame):
     def _on_clear(self):
         self._far_rows = []
         self._result_rows = []
+        self._import_errors = []
         self._clear_assets_table()
         self._clear_results_table()
         self._reset_summary()
@@ -332,9 +361,63 @@ class FarImportTab(ttk.Frame):
             return
         success, msg = export_all_to_excel(filepath, far_rows=self._result_rows)
         if success:
+            log.info("FAR results exported to %s", filepath)
             messagebox.showinfo("Export", msg)
         else:
+            log.error("Export failed: %s", msg)
             messagebox.showerror("Export Error", msg)
+
+    def _on_save_to_history(self):
+        """Persist calculated results to the local SQLite database."""
+        if not self._result_rows:
+            messagebox.showwarning("Save to History", "No results to save. Please calculate first.")
+            return
+        fy_label = self._fy_var.get()
+        try:
+            n = db.save_far_results(fy_label, self._result_rows)
+            log.info("Saved %d FAR records for %s to database", n, fy_label)
+            messagebox.showinfo(
+                "Saved to History",
+                f"{n} asset record(s) saved for {fy_label}.\n\n"
+                "You can view historical data in the FAR History tab.",
+            )
+        except Exception as exc:
+            log.exception("Failed to save to history: %s", exc)
+            messagebox.showerror("Database Error", f"Failed to save: {exc}")
+
+    def _on_error_report(self):
+        """Show the full validation error report from the last import."""
+        if not self._import_errors:
+            messagebox.showinfo("Error Report", "No validation issues found in the last import.")
+            return
+        win = tk.Toplevel(self)
+        win.title("FAR Import — Error Report")
+        win.geometry("700x400")
+        win.resizable(True, True)
+
+        ttk.Label(
+            win,
+            text=f"Validation Issues ({len(self._import_errors)} found):",
+            font=FONT_HEADING,
+        ).pack(anchor="w", padx=10, pady=(10, 4))
+
+        frame = ttk.Frame(win)
+        frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        txt = tk.Text(frame, wrap="word", font=("Courier", 9), relief="flat")
+        vsb = ttk.Scrollbar(frame, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=vsb.set)
+        txt.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        for err in self._import_errors:
+            txt.insert("end", err + "\n")
+        txt.configure(state="disabled")
+
+        ttk.Button(win, text="Close", command=win.destroy).pack(pady=(0, 10))
+
 
     # ------------------------------------------------------------------
     # Table population helpers
@@ -359,6 +442,8 @@ class FarImportTab(ttk.Frame):
                     format_percentage(row.get("dep_rate", 0.0)),
                     str(int(row.get("days_used", 365))),
                     row.get("dep_method", "WDV"),
+                    format_currency(row.get("opening_dta", 0.0)),
+                    format_currency(row.get("opening_dtl", 0.0)),
                 ),
                 tags=(tag,),
             )
@@ -386,6 +471,8 @@ class FarImportTab(ttk.Frame):
                     format_currency(r.get("ca_closing_wdv", 0.0)),
                     format_currency(r.get("difference", 0.0)),
                     format_percentage(r.get("tax_rate", 0.0)),
+                    format_currency(r.get("opening_dta", 0.0)),
+                    format_currency(r.get("opening_dtl", 0.0)),
                     format_currency(r.get("dta", 0.0)),
                     format_currency(r.get("dtl", 0.0)),
                 ),
@@ -419,3 +506,23 @@ class FarImportTab(ttk.Frame):
     def _clear_results_table(self):
         for item in self._results_tree.get_children():
             self._results_tree.delete(item)
+
+    # ------------------------------------------------------------------
+    # Public API (called by HistoryTab for year rollover)
+    # ------------------------------------------------------------------
+
+    def load_rolled_over_rows(self, rows: list, fy_label: str) -> None:
+        """Pre-load rolled-over opening rows and switch the FY selector."""
+        self._far_rows = rows
+        self._result_rows = []
+        self._import_errors = []
+        self._populate_assets_table(rows)
+        self._clear_results_table()
+        self._reset_summary()
+        if fy_label in self._fy_options:
+            self._fy_var.set(fy_label)
+        self._status_var.set(
+            f"Pre-loaded {len(rows)} rolled-over asset(s) for {fy_label}. "
+            "Click 'Calculate All' to compute depreciation."
+        )
+        log.info("Loaded %d rolled-over rows for %s", len(rows), fy_label)

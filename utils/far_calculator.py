@@ -68,7 +68,8 @@ def calculate_asset(row: dict, fy_label: str, tax_rate: float) -> dict:
         asset_id, asset_name, asset_type,
         it_opening_wdv, it_depreciation, it_closing_wdv,
         ca_opening_wdv, ca_depreciation, ca_closing_wdv,
-        difference, tax_rate, dta, dtl,
+        difference, tax_rate,
+        opening_dta, opening_dtl, dta, dtl,
         it_capital_gain, it_capital_gain_amount
     """
     asset_name  = row.get("asset_name", "")
@@ -80,6 +81,8 @@ def calculate_asset(row: dict, fy_label: str, tax_rate: float) -> dict:
     dep_rate    = row.get("dep_rate", 0.0)
     days_used   = row.get("days_used", 365.0)
     dep_method  = row.get("dep_method", "WDV").upper()
+    opening_dta = row.get("opening_dta", 0.0)
+    opening_dtl = row.get("opening_dtl", 0.0)
 
     # ── Income Tax depreciation ─────────────────────────────────────────────
     ca_category = asset_type_to_ca_category(asset_type)
@@ -144,6 +147,8 @@ def calculate_asset(row: dict, fy_label: str, tax_rate: float) -> dict:
         ca_closing_wdv  = opening_wdv - ca_depreciation
 
     # ── DTA / DTL ───────────────────────────────────────────────────────────
+    # The closing DTA/DTL for this year is computed from the current-year
+    # closing WDVs, then adjusted by the opening DTA/DTL carried forward.
     dta_input = DtaAssetInput(
         asset_name=asset_name,
         book_value=ca_closing_wdv,
@@ -152,6 +157,19 @@ def calculate_asset(row: dict, fy_label: str, tax_rate: float) -> dict:
     )
     dta_summary = compute_dta_dtl([dta_input])
     dta_row = dta_summary.rows[0] if dta_summary.rows else None
+
+    # Apply opening DTA/DTL balances:
+    # If we had an opening DTA, subtract it from current DTA (net movement).
+    # If we had an opening DTL, subtract it from current DTL (net movement).
+    current_dta = round(dta_row.dta, 2) if dta_row else 0.0
+    current_dtl = round(dta_row.dtl, 2) if dta_row else 0.0
+    closing_dta = max(round(current_dta - opening_dtl + opening_dta, 2), 0.0)
+    closing_dtl = max(round(current_dtl - opening_dta + opening_dtl, 2), 0.0)
+    # Ensure only one of DTA/DTL is non-zero
+    if closing_dta > 0 and closing_dtl > 0:
+        net = closing_dta - closing_dtl
+        closing_dta = max(net, 0.0)
+        closing_dtl = max(-net, 0.0)
 
     return {
         "asset_id":               row.get("asset_id", ""),
@@ -165,8 +183,10 @@ def calculate_asset(row: dict, fy_label: str, tax_rate: float) -> dict:
         "ca_closing_wdv":         round(ca_closing_wdv, 2),
         "difference":             round(dta_row.difference, 2) if dta_row else 0.0,
         "tax_rate":               tax_rate,
-        "dta":                    round(dta_row.dta, 2) if dta_row else 0.0,
-        "dtl":                    round(dta_row.dtl, 2) if dta_row else 0.0,
+        "opening_dta":            round(opening_dta, 2),
+        "opening_dtl":            round(opening_dtl, 2),
+        "dta":                    closing_dta,
+        "dtl":                    closing_dtl,
         "it_capital_gain":        it_result.capital_gain_flag,
         "it_capital_gain_amount": it_result.capital_gain_amount,
     }
