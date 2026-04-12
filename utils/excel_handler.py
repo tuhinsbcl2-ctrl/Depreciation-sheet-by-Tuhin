@@ -6,6 +6,9 @@ Import
 * Companies Act sheet: columns Asset Name, Category, Cost, Purchase Date,
   Useful Life, Residual Value %, Method
 * Income Tax sheet: columns Block Name, Opening WDV, Additions, Deletions, Rate
+* FAR sheet: Fixed Asset Register with Asset ID, Asset Name, Asset Type,
+  Purchase Date, Put to Use Date, Cost, Opening WDV, Additions, Deletions,
+  Sale Date, Dep Rate (%), Days Used, Depreciation Method, and more.
 
 Export
 ------
@@ -13,6 +16,7 @@ Export
 * Headers are bold, columns are auto-sized, numbers are formatted.
 """
 
+import csv
 from datetime import date
 from typing import List, Optional, Tuple
 
@@ -306,12 +310,255 @@ def export_dta_dtl(ws, summary):
     _auto_width(ws)
 
 
+# ---------------------------------------------------------------------------
+# FAR (Fixed Asset Register) IMPORT
+# ---------------------------------------------------------------------------
+
+# Maps substrings of lowercase column headers → internal field names.
+# Processed in order; first match wins for each field.
+_FAR_HEADER_MAP = [
+    ("asset id",                "asset_id"),
+    ("asset name",              "asset_name"),
+    ("asset type",              "asset_type"),
+    ("purchase date",           "purchase_date"),
+    ("put to use",              "put_to_use_date"),
+    ("cost",                    "cost"),
+    ("opening wdv",             "opening_wdv"),
+    ("addition",                "additions"),
+    ("deletion",                "deletions"),
+    ("sale value",              "deletions"),          # alternate header
+    ("sale date",               "sale_date"),
+    ("dep rate",                "dep_rate"),
+    ("rate",                    "dep_rate"),           # fallback
+    ("days used",               "days_used"),
+    ("depreciation method",     "dep_method"),
+    ("method",                  "dep_method"),         # fallback
+    ("depreciation for fy",     "dep_for_fy"),
+    ("accumulated depreciation","accum_dep"),
+    ("closing wdv",             "closing_wdv"),
+    ("profit",                  "profit_loss"),
+    ("loss on sale",            "profit_loss"),
+]
+
+
+def _map_far_columns(headers: List[str]) -> dict:
+    """
+    Build a field→column-index mapping from a list of lowercase header strings.
+
+    Each header is tested against *_FAR_HEADER_MAP* in order; the first
+    matching rule is used.  A field is only mapped once (first header wins).
+    """
+    col_map: dict = {}
+    for idx, header in enumerate(headers):
+        for key, field in _FAR_HEADER_MAP:
+            if key in header and field not in col_map:
+                col_map[field] = idx
+    return col_map
+
+
+def _normalise_date(value) -> Optional[str]:
+    """Return a DD/MM/YYYY string for *value* (date object or string), or None."""
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return value.strftime("%d/%m/%Y")
+    return str(value).strip() or None
+
+
+def _to_float(value, default: float = 0.0) -> float:
+    """Convert *value* to float, returning *default* on failure."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def import_far_data(filepath: str) -> Tuple[List[dict], List[str]]:
+    """
+    Read a Fixed Asset Register (FAR) from *filepath*.
+
+    Supports both ``.xlsx`` / ``.xls`` (via openpyxl) and ``.csv`` files.
+
+    The function locates a sheet whose name contains "far", "fixed asset", or
+    "asset register" (case-insensitive), falling back to the first sheet.
+
+    Expected column headers (flexible matching, case-insensitive):
+        Asset ID, Asset Name, Asset Type, Purchase Date, Put to Use Date,
+        Cost, Opening WDV, Additions, Deletions / Sale Value, Sale Date,
+        Dep Rate (%), Days Used, Depreciation Method, Depreciation for FY,
+        Accumulated Depreciation, Closing WDV, Profit/Loss on Sale.
+
+    Returns
+    -------
+    (rows, errors)
+        rows  — list of dicts with internal field names as keys
+        errors — list of human-readable error / warning strings
+    """
+    lower = filepath.lower()
+    if lower.endswith(".csv"):
+        return _import_far_csv(filepath)
+    return _import_far_excel(filepath)
+
+
+def _import_far_excel(filepath: str) -> Tuple[List[dict], List[str]]:
+    """Internal: read FAR from an Excel file."""
+    if not OPENPYXL_AVAILABLE:
+        return [], ["openpyxl is not installed. Run: pip install openpyxl"]
+
+    errors: List[str] = []
+    rows: List[dict] = []
+
+    try:
+        wb = openpyxl.load_workbook(filepath, data_only=True)
+    except Exception as exc:
+        return [], [f"Cannot open file: {exc}"]
+
+    # Pick an appropriate sheet
+    sheet_name = wb.sheetnames[0]
+    for name in wb.sheetnames:
+        if any(k in name.lower() for k in ("far", "fixed asset", "asset register")):
+            sheet_name = name
+            break
+
+    ws = wb[sheet_name]
+    headers = [str(c.value).strip().lower() if c.value else "" for c in ws[1]]
+    col_map = _map_far_columns(headers)
+
+    if "asset_name" not in col_map:
+        return [], [
+            f"Sheet '{sheet_name}' does not contain a recognisable 'Asset Name' column."
+        ]
+
+    for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        if all(v is None for v in row):
+            continue
+        entry = _extract_far_row(row, col_map)
+        if not entry.get("asset_name"):
+            errors.append(f"Row {row_num}: missing Asset Name, skipping.")
+            continue
+        rows.append(entry)
+
+    return rows, errors
+
+
+def _import_far_csv(filepath: str) -> Tuple[List[dict], List[str]]:
+    """Internal: read FAR from a CSV file."""
+    errors: List[str] = []
+    rows: List[dict] = []
+
+    try:
+        with open(filepath, newline="", encoding="utf-8-sig") as fh:
+            reader = csv.reader(fh)
+            raw_headers = next(reader, None)
+            if raw_headers is None:
+                return [], ["CSV file is empty."]
+            headers = [h.strip().lower() for h in raw_headers]
+            col_map = _map_far_columns(headers)
+
+            if "asset_name" not in col_map:
+                return [], ["CSV does not contain a recognisable 'Asset Name' column."]
+
+            for row_num, row in enumerate(reader, start=2):
+                if not any(row):
+                    continue
+                # Pad short rows
+                while len(row) < len(headers):
+                    row.append(None)
+                entry = _extract_far_row(row, col_map)
+                if not entry.get("asset_name"):
+                    errors.append(f"Row {row_num}: missing Asset Name, skipping.")
+                    continue
+                rows.append(entry)
+    except Exception as exc:
+        return [], [f"Cannot read CSV: {exc}"]
+
+    return rows, errors
+
+
+def _extract_far_row(row, col_map: dict) -> dict:
+    """Build a FAR entry dict from a single raw row."""
+    def _get(field, default=None):
+        idx = col_map.get(field)
+        if idx is None or idx >= len(row):
+            return default
+        return row[idx]
+
+    return {
+        "asset_id":       str(_get("asset_id", "")).strip(),
+        "asset_name":     str(_get("asset_name", "")).strip() if _get("asset_name") else "",
+        "asset_type":     str(_get("asset_type", "")).strip(),
+        "purchase_date":  _normalise_date(_get("purchase_date")),
+        "put_to_use_date":_normalise_date(_get("put_to_use_date")),
+        "cost":           _to_float(_get("cost")),
+        "opening_wdv":    _to_float(_get("opening_wdv")),
+        "additions":      _to_float(_get("additions")),
+        "deletions":      _to_float(_get("deletions")),
+        "sale_date":      _normalise_date(_get("sale_date")),
+        "dep_rate":       _to_float(_get("dep_rate")),
+        "days_used":      _to_float(_get("days_used"), 365.0),
+        "dep_method":     str(_get("dep_method", "WDV")).strip().upper(),
+        "dep_for_fy":     _to_float(_get("dep_for_fy")),
+        "accum_dep":      _to_float(_get("accum_dep")),
+        "closing_wdv":    _to_float(_get("closing_wdv")),
+        "profit_loss":    _to_float(_get("profit_loss")),
+    }
+
+
+# ---------------------------------------------------------------------------
+# FAR RESULTS EXPORT
+# ---------------------------------------------------------------------------
+
+def export_far_results(ws, far_rows: list):
+    """Write FAR depreciation results (IT + CA + DTA/DTL) to *ws*."""
+    if not OPENPYXL_AVAILABLE:
+        return
+
+    headers = [
+        "Asset ID", "Asset Name", "Asset Type",
+        "IT Opening WDV (₹)", "IT Dep (₹)", "IT Closing WDV (₹)",
+        "CA Opening WDV (₹)", "CA Dep (₹)", "CA Closing WDV (₹)",
+        "Difference (₹)", "Tax Rate (%)", "DTA (₹)", "DTL (₹)",
+    ]
+    for col, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=col, value=h)
+    _header_style(ws, 1, len(headers))
+
+    border = _thin_border()
+    num_fmt = "#,##0.00"
+    for r_idx, r in enumerate(far_rows, start=2):
+        vals = [
+            r.get("asset_id", ""),
+            r.get("asset_name", ""),
+            r.get("asset_type", ""),
+            r.get("it_opening_wdv", 0.0),
+            r.get("it_depreciation", 0.0),
+            r.get("it_closing_wdv", 0.0),
+            r.get("ca_opening_wdv", 0.0),
+            r.get("ca_depreciation", 0.0),
+            r.get("ca_closing_wdv", 0.0),
+            r.get("difference", 0.0),
+            r.get("tax_rate", 0.0),
+            r.get("dta", 0.0),
+            r.get("dtl", 0.0),
+        ]
+        for col, val in enumerate(vals, start=1):
+            cell = ws.cell(row=r_idx, column=col, value=val)
+            if isinstance(val, float):
+                cell.number_format = num_fmt
+            cell.border = border
+
+    _auto_width(ws)
+
+
 def export_all_to_excel(
     filepath: str,
     ca_schedule_rows: Optional[list] = None,
     ca_asset_name: str = "",
     tax_results: Optional[list] = None,
     dta_summary=None,
+    far_rows: Optional[list] = None,
 ) -> Tuple[bool, str]:
     """
     Export all available data to a single Excel workbook with multiple sheets.
@@ -340,6 +587,10 @@ def export_all_to_excel(
         if dta_summary:
             ws_dta = wb.create_sheet("DTA-DTL")
             export_dta_dtl(ws_dta, dta_summary)
+
+        if far_rows:
+            ws_far = wb.create_sheet("FAR Results")
+            export_far_results(ws_far, far_rows)
 
         if not wb.sheetnames:
             return False, "No data to export."

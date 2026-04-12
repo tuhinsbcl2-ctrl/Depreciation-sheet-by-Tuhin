@@ -14,6 +14,7 @@ from config import APP_TITLE, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT
 from ui.companies_act_tab import CompaniesActTab
 from ui.income_tax_tab import IncomeTaxTab
 from ui.dta_tab import DtaTab
+from ui.far_tab import FarImportTab
 from ui.styles import (
     COLOR_BG, COLOR_PRIMARY,
     FONT_LABEL,
@@ -109,6 +110,10 @@ class DepreciationApp:
         # Tab 3 — DTA / DTL
         dta_tab = DtaTab(notebook)
         notebook.add(dta_tab, text="  DTA / DTL Calculator  ")
+
+        # Tab 4 — FAR Import
+        far_tab = FarImportTab(notebook)
+        notebook.add(far_tab, text="  FAR Import & Bulk Calc  ")
 
         # Wire cross-tab auto-fill:  CA → IT and DTA;  IT → DTA
         ca_tab.set_tax_tab(it_tab)
