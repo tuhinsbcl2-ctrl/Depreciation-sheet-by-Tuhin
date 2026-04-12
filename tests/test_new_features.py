@@ -28,11 +28,13 @@ class TestFARValidation(unittest.TestCase):
         f = tempfile.NamedTemporaryFile(
             mode="w", suffix=".csv", delete=False, newline="", encoding="utf-8",
         )
-        writer = csv.writer(f)
-        writer.writerow(headers)
-        for row in rows:
-            writer.writerow(row)
-        f.close()
+        try:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            for row in rows:
+                writer.writerow(row)
+        finally:
+            f.close()
         return f.name
 
     def test_valid_rows_imported(self):

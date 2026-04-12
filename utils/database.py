@@ -256,11 +256,13 @@ class AssetDatabase:
                 "asset_id":       r["asset_id"],
                 "asset_name":     r["asset_name"],
                 "asset_type":     r["asset_type"],
-                "opening_wdv":    r["it_closing_wdv"],   # IT opening WDV
+                # 'opening_wdv' is the FAR import field name for IT opening WDV;
+                # it maps to 'it_opening_wdv' inside calculate_asset.
+                "opening_wdv":    r["it_closing_wdv"],
                 "ca_opening_wdv": r["ca_closing_wdv"],
                 "opening_dta":    r["dta"],
                 "opening_dtl":    r["dtl"],
-                # Reset current-year fields
+                # Reset current-year transactional fields to zero
                 "cost":         0.0,
                 "additions":    0.0,
                 "deletions":    0.0,

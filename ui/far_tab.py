@@ -37,7 +37,7 @@ from utils.logger import get_logger
 from utils.database import db
 from ui.styles import (
     COLOR_PRIMARY, COLOR_SUCCESS, COLOR_WARNING, COLOR_SECONDARY,
-    FONT_HEADING, FONT_LABEL, FONT_INPUT, FONT_BUTTON, FONT_TITLE,
+    FONT_HEADING, FONT_LABEL, FONT_INPUT, FONT_BUTTON, FONT_TITLE, FONT_MONO,
     PAD_OUTER, PAD_INNER, PAD_BUTTON, ENTRY_WIDTH,
 )
 
@@ -404,7 +404,7 @@ class FarImportTab(ttk.Frame):
         frame = ttk.Frame(win)
         frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-        txt = tk.Text(frame, wrap="word", font=("Courier", 9), relief="flat")
+        txt = tk.Text(frame, wrap="word", font=FONT_MONO, relief="flat")
         vsb = ttk.Scrollbar(frame, orient="vertical", command=txt.yview)
         txt.configure(yscrollcommand=vsb.set)
         txt.grid(row=0, column=0, sticky="nsew")

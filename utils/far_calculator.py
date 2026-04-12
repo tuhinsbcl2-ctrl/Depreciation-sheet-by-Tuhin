@@ -170,7 +170,8 @@ def calculate_asset(row: dict, fy_label: str, tax_rate: float) -> dict:
     # balance and offsets any DTL.  A prior-year DTL works in the opposite
     # direction.  This mirrors how deferred tax balances are rolled forward in
     # double-entry accounting (the opening balance plus the current-year movement
-    # equals the closing balance).
+    # equals the closing balance), consistent with AS 22 / IND AS 12 treatment
+    # of temporary differences and deferred tax roll-forward.
     current_dta = round(dta_row.dta, 2) if dta_row else 0.0
     current_dtl = round(dta_row.dtl, 2) if dta_row else 0.0
     closing_dta = max(round(current_dta + opening_dta - opening_dtl, 2), 0.0)

@@ -353,7 +353,9 @@ _FAR_HEADER_MAP = [
     ("closing wdv",             "closing_wdv"),
     ("profit",                  "profit_loss"),
     ("loss on sale",            "profit_loss"),
-    # Opening DTA / DTL balances (new columns for carry-forward)
+    # Opening DTA / DTL balances — carry-forward from the prior financial year.
+    # These are used in calculate_asset to compute the correct closing DTA/DTL.
+    # Column headers should read "Opening DTA" and "Opening DTL" in the FAR sheet.
     ("opening dta",             "opening_dta"),
     ("opening dtl",             "opening_dtl"),
 ]

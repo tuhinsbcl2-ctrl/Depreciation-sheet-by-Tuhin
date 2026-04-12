@@ -139,8 +139,8 @@ class HistoryTab(ttk.Frame):
         parent.rowconfigure(0, weight=1)
         parent.columnconfigure(0, weight=1)
 
-        self._tree.tag_configure("odd",  background="#FFFFFF")
-        self._tree.tag_configure("even", background=_ALT_COLOUR)
+        self._tree.tag_configure("even", background="#FFFFFF")
+        self._tree.tag_configure("odd",  background=_ALT_COLOUR)
 
     # ------------------------------------------------------------------
     # Event handlers
