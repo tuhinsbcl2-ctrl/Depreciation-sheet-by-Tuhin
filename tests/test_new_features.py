@@ -197,7 +197,11 @@ class TestAppSettings(unittest.TestCase):
     """Tests for AppSettings load/save."""
 
     def setUp(self):
-        self._tmp = tempfile.mktemp(suffix=".json")
+        self._tmp_fh = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        self._tmp = self._tmp_fh.name
+        self._tmp_fh.close()
+        # Remove the file so AppSettings sees a missing file and creates defaults
+        os.unlink(self._tmp)
 
     def tearDown(self):
         if os.path.exists(self._tmp):
@@ -231,7 +235,10 @@ class TestAssetDatabase(unittest.TestCase):
     """Tests for AssetDatabase."""
 
     def setUp(self):
-        self._tmp_db = tempfile.mktemp(suffix=".db")
+        fh = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._tmp_db = fh.name
+        fh.close()
+        os.unlink(self._tmp_db)  # Let SQLite create a fresh file
 
     def tearDown(self):
         if os.path.exists(self._tmp_db):

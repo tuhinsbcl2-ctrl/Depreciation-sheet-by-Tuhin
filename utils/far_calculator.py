@@ -158,14 +158,24 @@ def calculate_asset(row: dict, fy_label: str, tax_rate: float) -> dict:
     dta_summary = compute_dta_dtl([dta_input])
     dta_row = dta_summary.rows[0] if dta_summary.rows else None
 
-    # Apply opening DTA/DTL balances:
-    # If we had an opening DTA, subtract it from current DTA (net movement).
-    # If we had an opening DTL, subtract it from current DTL (net movement).
+    # Apply opening DTA/DTL balances to arrive at the closing (net) position:
+    #
+    # The current-year gross DTA/DTL is first computed purely from closing WDVs.
+    # The opening balance from the prior year is then incorporated as follows:
+    #
+    #   closing_dta = current_dta + opening_dta − opening_dtl
+    #   closing_dtl = current_dtl + opening_dtl − opening_dta
+    #
+    # Rationale: A prior-year DTA (deferred tax asset) adds to the current DTA
+    # balance and offsets any DTL.  A prior-year DTL works in the opposite
+    # direction.  This mirrors how deferred tax balances are rolled forward in
+    # double-entry accounting (the opening balance plus the current-year movement
+    # equals the closing balance).
     current_dta = round(dta_row.dta, 2) if dta_row else 0.0
     current_dtl = round(dta_row.dtl, 2) if dta_row else 0.0
-    closing_dta = max(round(current_dta - opening_dtl + opening_dta, 2), 0.0)
-    closing_dtl = max(round(current_dtl - opening_dta + opening_dtl, 2), 0.0)
-    # Ensure only one of DTA/DTL is non-zero
+    closing_dta = max(round(current_dta + opening_dta - opening_dtl, 2), 0.0)
+    closing_dtl = max(round(current_dtl + opening_dtl - opening_dta, 2), 0.0)
+    # Ensure only one of DTA/DTL is non-zero (they are mutually exclusive per asset)
     if closing_dta > 0 and closing_dtl > 0:
         net = closing_dta - closing_dtl
         closing_dta = max(net, 0.0)

@@ -119,6 +119,23 @@ class AppSettings:
         """Re-read the settings file from disk."""
         self.load()
 
+    def reset_to_defaults(self) -> bool:
+        """
+        Delete the settings file and reload defaults.
+
+        Returns True if the file was deleted successfully (or did not exist),
+        False if deletion failed due to a file-system error.
+        """
+        import os as _os
+        if _os.path.isfile(self._path):
+            try:
+                _os.remove(self._path)
+            except OSError as exc:
+                log.error("Cannot remove settings file: %s", exc)
+                return False
+        self.load()
+        return True
+
     # ------------------------------------------------------------------
     # Accessors
     # ------------------------------------------------------------------

@@ -20,7 +20,6 @@ Export
 """
 
 import csv
-import logging
 from datetime import date
 from typing import List, Optional, Tuple
 
@@ -38,7 +37,8 @@ try:
 except ImportError:
     PANDAS_AVAILABLE = False
 
-log = logging.getLogger(__name__)
+from utils.logger import get_logger
+log = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

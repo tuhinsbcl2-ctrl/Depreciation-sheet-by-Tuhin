@@ -174,16 +174,11 @@ class SettingsTab(ttk.Frame):
         ):
             return
 
-        import os
-        if os.path.isfile(settings._path):
-            try:
-                os.remove(settings._path)
-            except OSError as exc:
-                log.error("Cannot remove settings.json: %s", exc)
-
-        settings.reload()
-        log.info("Settings reset to defaults")
-        messagebox.showinfo(
-            "Reset Complete",
-            "Settings have been reset to defaults. Please switch away from and back to this tab to see the updated values.",
-        )
+        if settings.reset_to_defaults():
+            log.info("Settings reset to defaults")
+            messagebox.showinfo(
+                "Reset Complete",
+                "Settings have been reset to defaults. Please switch away from and back to this tab to see the updated values.",
+            )
+        else:
+            messagebox.showerror("Reset Error", "Could not remove settings.json. Check file permissions.")
