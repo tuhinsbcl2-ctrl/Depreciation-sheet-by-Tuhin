@@ -326,7 +326,10 @@ _FAR_HEADER_MAP = [
     ("opening wdv",             "opening_wdv"),
     ("addition",                "additions"),
     ("deletion",                "deletions"),
-    ("sale value",              "deletions"),          # alternate header
+    # "sale value" is an alternate header for deletions:
+    # in FAR context the sale proceeds reduce the WDV block in the same
+    # way as an asset deletion/disposal amount.
+    ("sale value",              "deletions"),
     ("sale date",               "sale_date"),
     ("dep rate",                "dep_rate"),
     ("rate",                    "dep_rate"),           # fallback

@@ -14,6 +14,7 @@ from config import (
     COMPANIES_ACT_USEFUL_LIVES,
     CA_TO_IT_BLOCK_MAP,
     DEFAULT_RESIDUAL_VALUE_PCT,
+    DEFAULT_PURCHASE_LOOKBACK_YEARS,
     FAR_ASSET_TYPE_TO_CA_CATEGORY,
 )
 from models.companies_act import AssetInput, compute_depreciation_schedule
@@ -103,7 +104,7 @@ def calculate_asset(row: dict, fy_label: str, tax_rate: float) -> dict:
     except Exception:
         pdate = None
     if pdate is None:
-        pdate = date(date.today().year - 5, 4, 1)
+        pdate = date(date.today().year - DEFAULT_PURCHASE_LOOKBACK_YEARS, 4, 1)
 
     ca_depreciation = 0.0
     ca_opening_wdv  = opening_wdv   # default if schedule has no matching row

@@ -62,6 +62,10 @@ FY_END_DAY = 31
 # Days in a standard year used for pro-rata calculation
 DAYS_IN_YEAR = 365
 
+# Fallback lookback (years) when a FAR row has no purchase / put-to-use date.
+# Assets without a date are assumed to have been purchased this many years ago.
+DEFAULT_PURCHASE_LOOKBACK_YEARS = 5
+
 # ---------------------------------------------------------------------------
 # UI / display constants
 # ---------------------------------------------------------------------------
