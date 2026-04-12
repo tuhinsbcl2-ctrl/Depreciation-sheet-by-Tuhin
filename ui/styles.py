@@ -28,6 +28,7 @@ FONT_LABEL = ("Helvetica", 10)
 FONT_INPUT = ("Helvetica", 10)
 FONT_BUTTON = ("Helvetica", 10, "bold")
 FONT_TABLE = ("Courier", 9)
+FONT_MONO  = ("Courier", 9)    # monospaced — error report dialogs, data tables
 FONT_SMALL = ("Helvetica", 8)
 
 # ---------------------------------------------------------------------------
