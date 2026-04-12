@@ -62,6 +62,10 @@ FY_END_DAY = 31
 # Days in a standard year used for pro-rata calculation
 DAYS_IN_YEAR = 365
 
+# Fallback lookback (years) when a FAR row has no purchase / put-to-use date.
+# Assets without a date are assumed to have been purchased this many years ago.
+DEFAULT_PURCHASE_LOOKBACK_YEARS = 5
+
 # ---------------------------------------------------------------------------
 # UI / display constants
 # ---------------------------------------------------------------------------
@@ -105,3 +109,24 @@ CA_TO_IT_BLOCK_MAP = {
     "Computer & IT Equipment": "Plant & Machinery (Special)",
     "Intangible Assets": "Intangible Assets",
 }
+
+# ---------------------------------------------------------------------------
+# Mapping from FAR "Asset Type" free-text → CA category
+# (substring match, case-insensitive; first match wins)
+# ---------------------------------------------------------------------------
+FAR_ASSET_TYPE_TO_CA_CATEGORY = [
+    ("building",     "Building"),
+    ("plant",        "Plant & Machinery"),
+    ("machinery",    "Plant & Machinery"),
+    ("furniture",    "Furniture & Fittings"),
+    ("fitting",      "Furniture & Fittings"),
+    ("vehicle",      "Vehicles"),
+    ("car",          "Vehicles"),
+    ("truck",        "Vehicles"),
+    ("computer",     "Computer & IT Equipment"),
+    ("it equip",     "Computer & IT Equipment"),
+    ("software",     "Intangible Assets"),
+    ("intangible",   "Intangible Assets"),
+    ("goodwill",     "Intangible Assets"),
+    ("patent",       "Intangible Assets"),
+]
